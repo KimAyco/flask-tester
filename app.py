@@ -4,71 +4,65 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-# Constants
-EXPECTED_FRAMES = 9
-FEATURE_DIM = 106
-MODEL_PATH = "model.h5"
-LABELS_PATH = "labels.txt"
+# Load the trained model
+model = tf.keras.models.load_model("model.h5")
 
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)  # 🔓 Enable CORS
-
-# Load model
-model = tf.keras.models.load_model(MODEL_PATH)
-
-# Load label map
+# Load labels
 labels = {}
-with open(LABELS_PATH) as f:
+with open("labels.txt") as f:
     for line in f:
         idx, name = line.strip().split(",")
         labels[int(idx)] = name
 
-@app.route("/")
-def index():
-    return "🧠 Flask model server is running!"
+# Config
+EXPECTED_FRAMES = 9
+FEATURE_DIM = 106
+
+# Initialize Flask
+app = Flask(__name__)
+CORS(app)  # ✅ Enable CORS for all routes
 
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
-        # ✅ Accept file upload (CSV)
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "No file provided"}), 400
+        # Load CSV file from form-data
+        if "file" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
 
-        df = pd.read_csv(file, header=None)
+        file = request.files["file"]
 
-        # ✅ Fill missing values
+        # Read CSV with header and skip it
+        df = pd.read_csv(file, header=0)  # ✅ Skip the column names
+
+        # Fill missing and validate shape
         df = df.fillna(0.0)
 
-        # ✅ Validate shape
         if df.shape[1] != FEATURE_DIM:
-            return jsonify({"error": f"Expected {FEATURE_DIM} features per row"}), 400
+            return jsonify({"error": f"Invalid feature dimension: expected {FEATURE_DIM}, got {df.shape[1]}"}), 400
 
-        # ✅ Pad/truncate to EXPECTED_FRAMES
         if df.shape[0] < EXPECTED_FRAMES:
-            pad = pd.DataFrame(np.zeros((EXPECTED_FRAMES - len(df), FEATURE_DIM)))
-            df = pd.concat([df, pad], ignore_index=True)
+            padding = pd.DataFrame(np.zeros((EXPECTED_FRAMES - len(df), FEATURE_DIM)))
+            df = pd.concat([df, padding], ignore_index=True)
         else:
             df = df.iloc[:EXPECTED_FRAMES]
 
-        # ✅ Prepare tensor
-        input_tensor = np.expand_dims(df.to_numpy(dtype=np.float32), axis=0)  # Shape: [1, 9, 106]
+        # Convert to model input
+        input_tensor = np.expand_dims(df.to_numpy(dtype=np.float32), axis=0)
 
-        # ✅ Run prediction
+        # Predict
         prediction = model.predict(input_tensor)[0]
         class_idx = int(np.argmax(prediction))
-        class_name = labels.get(class_idx, "Unknown")
+        class_name = labels[class_idx]
         confidence = float(prediction[class_idx])
 
         return jsonify({
             "prediction": class_name,
-            "confidence": round(confidence, 4)
+            "confidence": confidence
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Local testing
+# Entry point for local dev
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000)
