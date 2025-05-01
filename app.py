@@ -12,7 +12,7 @@ LABELS_PATH = "labels.txt"
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/predict": {"origins": "http://localhost:5500"}}, supports_credentials=True)
+CORS(app, resources={r"/predict": {"origins": "http://127.0.0.1:5500"}}, supports_credentials=True)
 
 
 # Load model
