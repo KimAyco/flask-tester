@@ -12,7 +12,12 @@ LABELS_PATH = "labels.txt"
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/predict": {"origins": "http://127.0.0.1:5500"}}, supports_credentials=True)
+
+# 🔧 Allow CORS from GitHub Pages
+CORS(app, resources={r"/predict": {"origins": [
+    "http://127.0.0.1:5500",
+    "https://kimayco.github.io/testerpage/"
+]}}, supports_credentials=True)
 
 # Load model
 model = tf.keras.models.load_model(MODEL_PATH)
@@ -31,31 +36,24 @@ def index():
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
-        # ✅ Accept file upload (CSV)
         file = request.files.get("file")
         if not file:
             return jsonify({"error": "No file provided"}), 400
 
-        # ✅ Read CSV with headers, then drop them
         df = pd.read_csv(file, header=0)
 
-        # ✅ Validate number of columns
         if df.shape[1] != FEATURE_DIM:
             return jsonify({"error": f"Expected {FEATURE_DIM} features per row, but got {df.shape[1]}"}), 400
 
-        # ✅ Fill missing values with 0.0
         df = df.fillna(0.0)
-
-        # ✅ Use only the first 9 rows (or pad if less)
         df = df.iloc[:EXPECTED_FRAMES]
+
         if df.shape[0] < EXPECTED_FRAMES:
             pad = pd.DataFrame(np.zeros((EXPECTED_FRAMES - len(df), FEATURE_DIM)))
             df = pd.concat([df, pad], ignore_index=True)
 
-        # ✅ Convert to tensor
         input_tensor = np.expand_dims(df.to_numpy(dtype=np.float32), axis=0)  # Shape: [1, 9, 106]
 
-        # ✅ Predict
         prediction = model.predict(input_tensor)[0]
         class_idx = int(np.argmax(prediction))
         class_name = labels.get(class_idx, "Unknown")
