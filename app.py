@@ -12,7 +12,8 @@ LABELS_PATH = "labels.txt"
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # 🔓 Enable CORS
+CORS(app, resources={r"/predict": {"origins": "http://localhost:5500"}}, supports_credentials=True)
+
 
 # Load model
 model = tf.keras.models.load_model(MODEL_PATH)
