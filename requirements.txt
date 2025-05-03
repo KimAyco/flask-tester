@@ -1,5 +1,4 @@
-Flask
-tflite-runtime
-numpy
-pandas
+flask
 gunicorn
+tflite-runtime==2.5.0
+numpy
