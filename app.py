@@ -1,9 +1,13 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # Importing CORS
 import numpy as np
-from tflite_runtime.interpreter import Interpreter  # ✅ Use this, not tensorflow
+from tflite_runtime.interpreter import Interpreter
 import json
 
 app = Flask(__name__)
+
+# Enabling CORS for all origins (or specify the allowed origins)
+CORS(app, origins=["http://127.0.0.1:5500"])  # Allow requests from your local HTML page
 
 # Label map
 label_map = {0: "Hello", 1: "j", 2: "z"}  # Adjust as needed
