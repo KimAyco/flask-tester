@@ -1,4 +1,4 @@
-flask
+Flask
 gunicorn
 tflite-runtime
-numpy
+numpy<2
