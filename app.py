@@ -1,72 +1,45 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from flask import Flask, jsonify, request
+import tensorflow as tf
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-
-# Constants
-EXPECTED_FRAMES = 9
-FEATURE_DIM = 106
-MODEL_PATH = "model.h5"
-LABELS_PATH = "labels.txt"
 
 # Initialize Flask app
 app = Flask(__name__)
 
-# 🔧 Allow CORS from GitHub Pages
-CORS(app, resources={r"/predict": {"origins": [
-    "http://127.0.0.1:5500",
-    "https://kimayco.github.io/testerpage/"
-]}}, supports_credentials=True)
+# Load the trained model (make sure the model is in the same directory as app.py or provide the correct path)
+model = tf.keras.models.load_model('model.h5')  # Change this if your model path is different
 
-# Load model
-model = tf.keras.models.load_model(MODEL_PATH)
+@app.route('/')
+def hello_world():
+    return 'Welcome to the Gesture Tester API!'
 
-# Load label map
-labels = {}
-with open(LABELS_PATH) as f:
-    for line in f:
-        idx, name = line.strip().split(",")
-        labels[int(idx)] = name
-
-@app.route("/")
-def index():
-    return "🧠 Flask model server is running!"
-
-@app.route("/predict", methods=["POST"])
+@app.route('/predict', methods=['POST'])
 def predict():
     try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "No file provided"}), 400
+        # Get the incoming data from the POST request
+        data = request.get_json()
 
-        df = pd.read_csv(file, header=0)
+        # Assuming the incoming data is a list of features (make sure your features match the model's input)
+        features = np.array(data['features'])  # Ensure your features are in a proper format for prediction
+        
+        # If necessary, reshape the input data to match the expected input shape (e.g., (1, frames, features))
+        features = features.reshape((1, 9, 106))  # Adjust this based on your model's expected shape
 
-        if df.shape[1] != FEATURE_DIM:
-            return jsonify({"error": f"Expected {FEATURE_DIM} features per row, but got {df.shape[1]}"}), 400
+        # Make prediction
+        prediction = model.predict(features)
 
-        df = df.fillna(0.0)
-        df = df.iloc[:EXPECTED_FRAMES]
+        # Assuming your model's output is a vector of class probabilities (change if your model outputs differently)
+        predicted_idx = np.argmax(prediction)
+        predicted_label = ['Hello', 'j', 'z'][predicted_idx]  # Modify this with your actual labels
+        confidence = prediction[0][predicted_idx] * 100  # Confidence of prediction
 
-        if df.shape[0] < EXPECTED_FRAMES:
-            pad = pd.DataFrame(np.zeros((EXPECTED_FRAMES - len(df), FEATURE_DIM)))
-            df = pd.concat([df, pad], ignore_index=True)
-
-        input_tensor = np.expand_dims(df.to_numpy(dtype=np.float32), axis=0)  # Shape: [1, 9, 106]
-
-        prediction = model.predict(input_tensor)[0]
-        class_idx = int(np.argmax(prediction))
-        class_name = labels.get(class_idx, "Unknown")
-        confidence = float(prediction[class_idx])
-
+        # Return the prediction in JSON format
         return jsonify({
-            "prediction": class_name,
-            "confidence": round(confidence, 4)
+            'prediction': predicted_label,
+            'confidence': round(confidence, 2)
         })
-
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 400
 
-# Local testing
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
