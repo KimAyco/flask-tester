@@ -1,66 +1,46 @@
 from flask import Flask, request, jsonify
 import numpy as np
-import pandas as pd
-import tensorflow as tf
+import tensorflow as tf  # or use tflite_runtime.interpreter
 import json
 
 app = Flask(__name__)
 
-# Configuration
-FEATURE_DIM = 106
-EXPECTED_FRAMES = 9
-LABEL_FILE = 'labels.txt'
-MODEL_PATH = 'model.h5'
+# Load labels
+label_map = {0: "Hello", 1: "j", 2: "z"}  # Modify as per your labels
 
-# Load Label Map
-label_map = {}
-with open(LABEL_FILE, 'r') as f:
-    for line in f:
-        idx, label = line.strip().split(',')
-        label_map[int(idx)] = label
+# Load TFLite model
+interpreter = tf.lite.Interpreter(model_path="model.tflite")
+interpreter.allocate_tensors()
 
-# Load the Model
-model = tf.keras.models.load_model(MODEL_PATH)
-
-def preprocess_json(data):
-    features = data.get('features')
-    if not features:
-        raise ValueError("Missing 'features' in JSON payload.")
-
-    df = pd.DataFrame(features).fillna(0.0)
-    if df.shape[1] != FEATURE_DIM:
-        raise ValueError(f"Expected {FEATURE_DIM} features, got {df.shape[1]}.")
-
-    if len(df) < EXPECTED_FRAMES:
-        pad = pd.DataFrame(np.zeros((EXPECTED_FRAMES - len(df), FEATURE_DIM)))
-        df = pd.concat([df, pad], ignore_index=True)
-    else:
-        df = df.iloc[:EXPECTED_FRAMES]
-
-    return df.to_numpy(dtype=np.float32).reshape(1, EXPECTED_FRAMES, FEATURE_DIM)
+# Get input and output details
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        payload = request.get_json()
-        input_data = preprocess_json(payload)
-        prediction = model.predict(input_data, verbose=0)
-        predicted_idx = int(np.argmax(prediction))
-        confidence = float(prediction[0][predicted_idx])
-        predicted_label = label_map.get(predicted_idx, "Unknown")
+        data = request.get_json()
+        input_data = np.array(data["data"], dtype=np.float32).reshape(1, 9, 106)
+
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        interpreter.invoke()
+        output_data = interpreter.get_tensor(output_details[0]['index'])
+
+        predicted_idx = np.argmax(output_data[0])
+        confidence = float(output_data[0][predicted_idx])
 
         return jsonify({
-            "label": predicted_label,
-            "confidence": round(confidence, 2)
+            "prediction": label_map.get(predicted_idx, "Unknown"),
+            "confidence": round(confidence, 4)
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": str(e)}), 500
 
-# Health check route
-@app.route('/')
+# Optional root route for testing
+@app.route("/", methods=["GET"])
 def home():
-    return "🧠 Gesture Prediction API is running."
+    return "🧠 TFLite Model Server Running"
 
 if __name__ == '__main__':
     app.run(debug=True)
