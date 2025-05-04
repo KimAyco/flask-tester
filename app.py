@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app, origins=["http://127.0.0.1:5500"])  # Allow requests from your local HTML page
 
 # Label map
-label_map = {0: "Hello", 1: "j", 2: "z"}  # Adjust as needed
+label_map = {0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'hello', 11: 'j', 12: 'z'}  # Adjust as needed
 
 # Load the TFLite model
 interpreter = Interpreter(model_path="model.tflite")
