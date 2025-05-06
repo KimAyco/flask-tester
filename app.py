@@ -7,7 +7,12 @@ import json
 app = Flask(__name__)
 
 # Enabling CORS for all origins (or specify the allowed origins)
-CORS(app, origins=["http://127.0.0.1:5500", "https://kimayco.github.io/mediapipetest1/index.html"])  # Allow requests from your local HTML page
+CORS(app, resources={r"/*": {"origins": [
+    "http://127.0.0.1:5500",
+    "https://kimayco.github.io",
+    "https://kimayco.github.io/mediapipetest1"
+]}})
+  # Allow requests from your local HTML page
 
 # Label map
 label_map = {0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'hello', 11: 'j', 12: 'z'}  # Adjust as needed
