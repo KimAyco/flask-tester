@@ -9,10 +9,12 @@ app = Flask(__name__)
 # Enabling CORS for all origins (or specify the allowed origins)
 CORS(app, resources={r"/*": {"origins": [
     "http://127.0.0.1:5500",
+    "http://localhost",  # <-- ADD THIS
     "https://kimayco.github.io",
     "https://kimayco.github.io/mediapipetest1",
     "http://localhost/capstone/signspeak2.6/translate.php"
 ]}})
+
   # Allow requests from your local HTML page
 
 # Label map
