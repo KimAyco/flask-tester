@@ -11,6 +11,7 @@ CORS(app, resources={r"/*": {"origins": [
     "http://127.0.0.1:5500",
     "https://kimayco.github.io",
     "https://kimayco.github.io/mediapipetest1"
+    "http://localhost/capstone/signspeak2.6/translate.php"
 ]}})
   # Allow requests from your local HTML page
 
