@@ -18,7 +18,19 @@ CORS(app, resources={r"/*": {"origins": [
   # Allow requests from your local HTML page
 
 # Label map
-label_map = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'A': 10, 'B': 11, 'Big': 12, 'Book': 13, 'C': 14, 'D': 15, 'Drink': 16, 'E': 17, 'Eat': 18, 'F': 19, 'Friend': 20, 'G': 21, 'Go': 22, 'Good': 23, 'H': 24, 'Happy': 25, 'Help': 26, 'Home': 27, 'How': 28, 'I': 29, 'K': 30, 'L': 31, 'M': 32, 'N': 33, 'P': 34, 'Please': 35, 'Q': 36, 'R': 37, 'S': 38, 'Sad': 39, 'Small': 40, 'Sorry': 41, 'Stop': 42, 'T': 43, 'Teacher': 44, 'Thank you': 45, 'U': 46, 'V': 47, 'W': 48, 'Water': 49, 'What': 50, 'When': 51, 'Where': 52, 'Who': 53, 'X': 54, 'Y': 55, 'hello': 56, 'j': 57, 'why': 58, 'z': 59}  # Adjust as needed
+label_map = {
+    0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 
+    8: '8', 9: '9', 10: 'A', 11: 'B', 12: 'Big', 13: 'Book', 14: 'C', 
+    15: 'D', 16: 'Drink', 17: 'E', 18: 'Eat', 19: 'F', 20: 'Friend', 
+    21: 'G', 22: 'Go', 23: 'Good', 24: 'H', 25: 'Happy', 26: 'Help', 
+    27: 'Home', 28: 'How', 29: 'I', 30: 'K', 31: 'L', 32: 'M', 33: 'N', 
+    34: 'P', 35: 'Please', 36: 'Q', 37: 'R', 38: 'S', 39: 'Sad', 
+    40: 'Small', 41: 'Sorry', 42: 'Stop', 43: 'T', 44: 'Teacher', 
+    45: 'Thank you', 46: 'U', 47: 'V', 48: 'W', 49: 'Water', 50: 'What', 
+    51: 'When', 52: 'Where', 53: 'Who', 54: 'X', 55: 'Y', 56: 'hello', 
+    57: 'j', 58: 'why', 59: 'z'
+}
+
 
 # Load the TFLite model
 interpreter = Interpreter(model_path="model.tflite")
@@ -55,4 +67,5 @@ def home():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
 
