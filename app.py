@@ -44,7 +44,41 @@ output_details = interpreter.get_output_details()
 def predict():
     try:
         data = request.get_json(force=True)
-        input_data = np.array(data["data"], dtype=np.float32).reshape(1, 9, 106)
+        # Expecting 9 frames x 24 features (wrist + 5 fingertips per hand, x/y)
+        arr = np.array(data["data"], dtype=np.float32)
+        if arr.shape != (9, 24):
+            return jsonify({
+                "error": f"Invalid input shape {arr.shape}, expected (9, 24)"
+            }), 400
+
+        # Adapt to model's expected input shape if different (e.g., 9x106)
+        expected_shape = tuple(input_details[0]["shape"])  # (1, T, F)
+        if len(expected_shape) != 3:
+            return jsonify({
+                "error": f"Unexpected model input shape {expected_shape}"
+            }), 500
+
+        batch_size, expected_time, expected_features = expected_shape
+
+        # Time dimension adjust (pad/truncate along frames)
+        if expected_time == 9:
+            time_aligned = arr
+        elif expected_time > 9:
+            pad_frames = expected_time - 9
+            time_aligned = np.pad(arr, ((0, pad_frames), (0, 0)), mode='constant')
+        else:  # expected_time < 9
+            time_aligned = arr[:expected_time, :]
+
+        # Feature dimension adjust (pad/truncate along features)
+        if expected_features == 24:
+            feature_aligned = time_aligned
+        elif expected_features > 24:
+            pad_feats = expected_features - 24
+            feature_aligned = np.pad(time_aligned, ((0, 0), (0, pad_feats)), mode='constant')
+        else:  # expected_features < 24
+            feature_aligned = time_aligned[:, :expected_features]
+
+        input_data = feature_aligned.reshape(1, expected_time, expected_features).astype(np.float32)
 
         interpreter.set_tensor(input_details[0]['index'], input_data)
         interpreter.invoke()
@@ -67,5 +101,3 @@ def home():
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-
