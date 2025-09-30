@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS  # Importing CORS
 import numpy as np
 import os
+import traceback
 import json
 
 # Use TensorFlow Lite interpreter from TensorFlow (more portable on Render)
@@ -116,6 +117,9 @@ def predict():
         if seq.ndim != 2:
             return jsonify({"error": f"Invalid input. Expected 2D list (T,F), got shape {seq.shape}"}), 400
 
+        # Ensure model is loaded (needed to inspect input shapes)
+        ensure_interpreter()
+
         # Determine expected frames and feature handling from stats or model
         expected_time = int(norm_stats["EXPECTED_FRAMES"]) if norm_stats else int(input_details[0]["shape"][1])
         seq = pad_or_truncate_time(seq, expected_time)
@@ -161,7 +165,6 @@ def predict():
             except Exception:
                 pass
 
-        ensure_interpreter()
         interpreter.set_tensor(input_details[0]['index'], hand_tensor)
         interpreter.invoke()
         output_data = interpreter.get_tensor(output_details[0]['index'])
@@ -175,7 +178,21 @@ def predict():
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        details = {"error": str(e)}
+        try:
+            details.update({
+                "F": int(F) if 'F' in locals() else None,
+                "expected_time": int(expected_time) if 'expected_time' in locals() else None,
+                "total_nodes": int(total_nodes) if 'total_nodes' in locals() else None,
+                "joint_feats": int(joint_feats) if 'joint_feats' in locals() else None,
+                "hand_flat_shape": list(hand_flat.shape) if 'hand_flat' in locals() else None,
+                "hand_tensor_shape": list(hand_tensor.shape) if 'hand_tensor' in locals() else None,
+                "model_input_shape": list(input_details[0]["shape"]) if input_details else None,
+            })
+        except Exception:
+            pass
+        details["trace"] = traceback.format_exc()
+        return jsonify(details), 500
 
 @app.route("/", methods=["GET"])
 def home():
