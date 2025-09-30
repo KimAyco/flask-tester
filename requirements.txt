@@ -1,5 +1,0 @@
-Flask
-gunicorn
-tflite-runtime
-numpy<2
-flask-cors
