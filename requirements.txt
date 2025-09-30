@@ -1,0 +1,8 @@
+Flask>=3.0.0,<3.1.0
+flask-cors>=4.0.0,<5.0.0
+# Pin NumPy to 1.26.x to avoid ABI issues on Render
+numpy==1.26.4
+# Prefer TensorFlow CPU (uses tf.lite.Interpreter in app) for portability
+tensorflow-cpu==2.14.0
+# Production WSGI server
+gunicorn>=21.2.0,<22.0.0
