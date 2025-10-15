@@ -10,17 +10,9 @@ import tensorflow as tf  # type: ignore
 
 app = Flask(__name__)
 
-# Enabling CORS for all origins (or specify the allowed origins)
-CORS(app, resources={r"/*": {"origins": [
-    "http://127.0.0.1:5500",
-    "http://localhost",  # <-- ADD THIS
-    "https://kimayco.github.io",
-    "https://kimayco.github.io/mediapipetest1",
-    "http://localhost/capstone/signspeak2.6/translate.php",
-    "http:///C:/Users/admin/Desktop/advance_collectorV1.html"
-    
-]}})
-  # Allow requests from your local HTML page
+# Enabling CORS for all origins (allows file:// pages with Origin: null and localhost)
+CORS(app, resources={r"/*": {"origins": "*"}})
+  # Allow requests from any origin; do not use credentials
 
 # Paths (can be overridden via environment variables on Render)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -266,5 +258,3 @@ def health():
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port, debug=False)
-
-
