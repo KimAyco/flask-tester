@@ -19,29 +19,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LABELS_PATH = os.getenv("LABELS_PATH", os.path.join(BASE_DIR, "labels.txt"))
 PREPROCESS_STATS = os.getenv("PREPROCESS_STATS", os.path.join(BASE_DIR, "preprocess_stats.npz"))
 
-# Support ensembling the 3 new models by default. Override with TFLITE_PATHS (comma-separated)
-_default_models = [
-    os.path.join(BASE_DIR, "ST-GCN (datasets 3.0 & 4.0) V1.tflite"),
-    os.path.join(BASE_DIR, "ST-GCN (datasets 3.0) V1.tflite"),
-    os.path.join(BASE_DIR, "ST-GCN (datasets 4.0) V1.tflite"),
-]
-TFLITE_PATHS = os.getenv("TFLITE_PATHS", "").strip()
-if TFLITE_PATHS:
-    MODEL_PATHS = [p.strip() for p in TFLITE_PATHS.split(",") if p.strip()]
-else:
-    MODEL_PATHS = _default_models
-
-# Model weights: default to [0.5, 0.25, 0.25] aligned with MODEL_PATHS order above.
-# Can override via TFLITE_WEIGHTS env (comma-separated floats) matching number of models.
-_default_weights = [0.5, 0.25, 0.25]
-TFLITE_WEIGHTS = os.getenv("TFLITE_WEIGHTS", "").strip()
-if TFLITE_WEIGHTS:
-    try:
-        MODEL_WEIGHTS = [float(w.strip()) for w in TFLITE_WEIGHTS.split(",") if w.strip()]
-    except Exception:
-        MODEL_WEIGHTS = _default_weights
-else:
-    MODEL_WEIGHTS = _default_weights
+# Use single ST-GCN model
+MODEL_PATH = os.getenv("TFLITE_PATH", os.path.join(BASE_DIR, "ST-GCN.tflite"))
 
 # Load label map (index -> label)
 label_map = {}
@@ -72,35 +51,22 @@ if os.path.exists(PREPROCESS_STATS):
     except Exception:
         norm_stats = None
 
-# Load the TFLite models lazily to ensure environment is ready
-interpreters = []
-input_details_list = []
-output_details_list = []
-MODEL_WEIGHTS_NORM = []
+# Load the TFLite model lazily to ensure environment is ready
+interpreter = None
+input_details = None
+output_details = None
 
-def ensure_interpreters():
-    global interpreters, input_details_list, output_details_list, MODEL_WEIGHTS_NORM
-    if interpreters:
+def ensure_interpreter():
+    global interpreter, input_details, output_details
+    if interpreter is not None:
         return
-    if not MODEL_PATHS:
-        raise FileNotFoundError("No model paths provided. Set TFLITE_PATHS or place default STGCN_model(1-4).tflite files.")
-    for mp in MODEL_PATHS:
-        if not os.path.exists(mp):
-            raise FileNotFoundError(f"TFLite model not found at {mp}")
-    for mp in MODEL_PATHS:
-        itp = tf.lite.Interpreter(model_path=mp)
-        itp.allocate_tensors()
-        interpreters.append(itp)
-        input_details_list.append(itp.get_input_details())
-        output_details_list.append(itp.get_output_details())
-    # Prepare normalized weights
-    if len(MODEL_WEIGHTS) != len(MODEL_PATHS):
-        # If mismatch, fall back to equal weights
-        equal_w = 1.0 / float(len(MODEL_PATHS))
-        MODEL_WEIGHTS_NORM = [equal_w for _ in MODEL_PATHS]
-    else:
-        s = sum(MODEL_WEIGHTS) or 1.0
-        MODEL_WEIGHTS_NORM = [w / s for w in MODEL_WEIGHTS]
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"TFLite model not found at {MODEL_PATH}")
+    
+    interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
 
 def pad_or_truncate_time(arr: np.ndarray, expected_frames: int) -> np.ndarray:
     t = arr.shape[0]
@@ -149,12 +115,11 @@ def predict():
         if seq.ndim != 2:
             return jsonify({"error": f"Invalid input. Expected 2D list (T,F), got shape {seq.shape}"}), 400
 
-        # Ensure models are loaded (needed to inspect input shapes)
-        ensure_interpreters()
+        # Ensure model is loaded (needed to inspect input shapes)
+        ensure_interpreter()
 
-        # Determine expected frames and feature handling from stats or first model
-        first_input = input_details_list[0]
-        expected_time = int(norm_stats["EXPECTED_FRAMES"]) if norm_stats else int(first_input[0]["shape"][1])
+        # Determine expected frames and feature handling from stats or model
+        expected_time = int(norm_stats["EXPECTED_FRAMES"]) if norm_stats else int(input_details[0]["shape"][1])
         seq = pad_or_truncate_time(seq, expected_time)
 
         F = seq.shape[1]
@@ -184,40 +149,37 @@ def predict():
         except Exception:
             return jsonify({"error": f"Cannot reshape to (1,{expected_time},{total_nodes},{joint_feats}) from {hand_flat.shape}"}), 400
 
-        # Run all models once with weighted aggregation (default weights 0.5, 0.25, 0.25)
-        agg_probs = None
-        top3_by_model = []
-        weights_to_use = MODEL_WEIGHTS_NORM if MODEL_WEIGHTS_NORM else [1.0/len(interpreters)]*len(interpreters)
-        for weight, itp, inp_det, out_det in zip(weights_to_use, interpreters, input_details_list, output_details_list):
-            model_input_shape = inp_det[0]["shape"]
-            tensor = hand_tensor
-            if tuple(model_input_shape) != tensor.shape:
-                try:
-                    tensor = tensor.astype(np.float32)
-                    mt = int(model_input_shape[1])
-                    if mt != expected_time:
-                        seq2 = pad_or_truncate_time(hand_flat, mt)
-                        tensor = seq2.reshape(1, mt, total_nodes, joint_feats).astype(np.float32)
-                except Exception:
-                    pass
-            itp.set_tensor(inp_det[0]['index'], tensor)
-            itp.invoke()
-            probs = itp.get_tensor(out_det[0]['index'])[0]
-            top3_idx = np.argsort(-probs)[:3]
-            top3_by_model.append([
-                {"label": label_map.get(int(i), str(int(i))), "prob": float(probs[i])} for i in top3_idx
-            ])
-            weighted = weight * probs
-            agg_probs = weighted if agg_probs is None else agg_probs + weighted
-
-        # weighted combination already applied; get final
-        final_idx = int(np.argmax(agg_probs))
-        final_conf = float(agg_probs[final_idx])
+        # Run single model
+        model_input_shape = input_details[0]["shape"]
+        tensor = hand_tensor
+        if tuple(model_input_shape) != tensor.shape:
+            try:
+                tensor = tensor.astype(np.float32)
+                mt = int(model_input_shape[1])
+                if mt != expected_time:
+                    seq2 = pad_or_truncate_time(hand_flat, mt)
+                    tensor = seq2.reshape(1, mt, total_nodes, joint_feats).astype(np.float32)
+            except Exception:
+                pass
+        
+        interpreter.set_tensor(input_details[0]['index'], tensor)
+        interpreter.invoke()
+        probs = interpreter.get_tensor(output_details[0]['index'])[0]
+        
+        # Get top 3 predictions
+        top3_idx = np.argsort(-probs)[:3]
+        top3_predictions = [
+            {"label": label_map.get(int(i), str(int(i))), "prob": float(probs[i])} for i in top3_idx
+        ]
+        
+        # Get final prediction
+        final_idx = int(np.argmax(probs))
+        final_conf = float(probs[final_idx])
 
         return jsonify({
             "prediction": label_map.get(final_idx, "Unknown"),
             "confidence": round(final_conf, 4),
-            "models_top3": top3_by_model
+            "top3": top3_predictions
         })
 
     except Exception as e:
@@ -230,7 +192,7 @@ def predict():
                 "joint_feats": int(joint_feats) if 'joint_feats' in locals() else None,
                 "hand_flat_shape": list(hand_flat.shape) if 'hand_flat' in locals() else None,
                 "hand_tensor_shape": list(hand_tensor.shape) if 'hand_tensor' in locals() else None,
-                "model_input_shape": list(input_details_list[0][0]["shape"]) if input_details_list else None,
+                "model_input_shape": list(input_details[0]["shape"]) if input_details else None,
             })
         except Exception:
             pass
@@ -244,12 +206,12 @@ def home():
 @app.route("/health", methods=["GET"])
 def health():
     try:
-        ensure_interpreters()
+        ensure_interpreter()
         info = {
             "status": "ok",
-            "models_loaded": len(interpreters),
-            "model_input_shapes": [ids[0]["shape"].tolist() for ids in input_details_list] if input_details_list else [],
-            "weights": MODEL_WEIGHTS_NORM,
+            "model_loaded": interpreter is not None,
+            "model_path": MODEL_PATH,
+            "model_input_shape": input_details[0]["shape"].tolist() if input_details else None,
         }
         return jsonify(info)
     except Exception as e:
