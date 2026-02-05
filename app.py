@@ -20,8 +20,8 @@ LABELS_PATH = os.getenv("LABELS_PATH", os.path.join(BASE_DIR, "labels.txt"))
 PREPROCESS_STATS = os.getenv("PREPROCESS_STATS", os.path.join(BASE_DIR, "preprocess_stats.npz"))
 
 # Use dual ST-GCN models (old and new)
-OLD_MODEL_PATH = os.getenv("OLD_TFLITE_PATH", os.path.join(BASE_DIR, "old_ST-GCN.tflite"))
-NEW_MODEL_PATH = os.getenv("NEW_TFLITE_PATH", os.path.join(BASE_DIR, "new_ST-GCN.tflite"))
+OLD_MODEL_PATH = os.getenv("OLD_TFLITE_PATH", os.path.join(BASE_DIR, "OLD_ST-GCN.tflite"))
+NEW_MODEL_PATH = os.getenv("NEW_TFLITE_PATH", os.path.join(BASE_DIR, "NEW_ST-GCN.tflite"))
 
 # Weighting for ensemble prediction (new model gets 65%, old model gets 35%)
 NEW_MODEL_WEIGHT = 0.65
@@ -293,4 +293,5 @@ def health():
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port, debug=False)
+
 
