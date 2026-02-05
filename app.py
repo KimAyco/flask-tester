@@ -19,8 +19,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LABELS_PATH = os.getenv("LABELS_PATH", os.path.join(BASE_DIR, "labels.txt"))
 PREPROCESS_STATS = os.getenv("PREPROCESS_STATS", os.path.join(BASE_DIR, "preprocess_stats.npz"))
 
-# Use single ST-GCN model
-MODEL_PATH = os.getenv("TFLITE_PATH", os.path.join(BASE_DIR, "ST-GCN.tflite"))
+# Use dual ST-GCN models (old and new)
+OLD_MODEL_PATH = os.getenv("OLD_TFLITE_PATH", os.path.join(BASE_DIR, "old_ST-GCN.tflite"))
+NEW_MODEL_PATH = os.getenv("NEW_TFLITE_PATH", os.path.join(BASE_DIR, "new_ST-GCN.tflite"))
+
+# Weighting for ensemble prediction (new model gets 65%, old model gets 35%)
+NEW_MODEL_WEIGHT = 0.65
+OLD_MODEL_WEIGHT = 0.35
 
 # Load label map (index -> label)
 label_map = {}
@@ -51,22 +56,39 @@ if os.path.exists(PREPROCESS_STATS):
     except Exception:
         norm_stats = None
 
-# Load the TFLite model lazily to ensure environment is ready
-interpreter = None
-input_details = None
-output_details = None
+# Load the TFLite models lazily to ensure environment is ready
+old_interpreter = None
+old_input_details = None
+old_output_details = None
 
-def ensure_interpreter():
-    global interpreter, input_details, output_details
-    if interpreter is not None:
-        return
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"TFLite model not found at {MODEL_PATH}")
+new_interpreter = None
+new_input_details = None
+new_output_details = None
+
+def ensure_interpreters():
+    global old_interpreter, old_input_details, old_output_details
+    global new_interpreter, new_input_details, new_output_details
     
-    interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
+    if old_interpreter is not None and new_interpreter is not None:
+        return
+    
+    # Load old model
+    if not os.path.exists(OLD_MODEL_PATH):
+        raise FileNotFoundError(f"Old TFLite model not found at {OLD_MODEL_PATH}")
+    
+    old_interpreter = tf.lite.Interpreter(model_path=OLD_MODEL_PATH)
+    old_interpreter.allocate_tensors()
+    old_input_details = old_interpreter.get_input_details()
+    old_output_details = old_interpreter.get_output_details()
+    
+    # Load new model
+    if not os.path.exists(NEW_MODEL_PATH):
+        raise FileNotFoundError(f"New TFLite model not found at {NEW_MODEL_PATH}")
+    
+    new_interpreter = tf.lite.Interpreter(model_path=NEW_MODEL_PATH)
+    new_interpreter.allocate_tensors()
+    new_input_details = new_interpreter.get_input_details()
+    new_output_details = new_interpreter.get_output_details()
 
 def pad_or_truncate_time(arr: np.ndarray, expected_frames: int) -> np.ndarray:
     t = arr.shape[0]
@@ -115,11 +137,11 @@ def predict():
         if seq.ndim != 2:
             return jsonify({"error": f"Invalid input. Expected 2D list (T,F), got shape {seq.shape}"}), 400
 
-        # Ensure model is loaded (needed to inspect input shapes)
-        ensure_interpreter()
+        # Ensure models are loaded (needed to inspect input shapes)
+        ensure_interpreters()
 
         # Determine expected frames and feature handling from stats or model
-        expected_time = int(norm_stats["EXPECTED_FRAMES"]) if norm_stats else int(input_details[0]["shape"][1])
+        expected_time = int(norm_stats["EXPECTED_FRAMES"]) if norm_stats else int(new_input_details[0]["shape"][1])
         seq = pad_or_truncate_time(seq, expected_time)
 
         F = seq.shape[1]
@@ -149,32 +171,72 @@ def predict():
         except Exception:
             return jsonify({"error": f"Cannot reshape to (1,{expected_time},{total_nodes},{joint_feats}) from {hand_flat.shape}"}), 400
 
-        # Run single model
-        model_input_shape = input_details[0]["shape"]
-        tensor = hand_tensor
-        if tuple(model_input_shape) != tensor.shape:
+        # Run both models and combine predictions
+        
+        # Prepare tensor for old model
+        old_model_input_shape = old_input_details[0]["shape"]
+        old_tensor = hand_tensor.copy()
+        if tuple(old_model_input_shape) != old_tensor.shape:
             try:
-                tensor = tensor.astype(np.float32)
-                mt = int(model_input_shape[1])
+                old_tensor = old_tensor.astype(np.float32)
+                mt = int(old_model_input_shape[1])
                 if mt != expected_time:
                     seq2 = pad_or_truncate_time(hand_flat, mt)
-                    tensor = seq2.reshape(1, mt, total_nodes, joint_feats).astype(np.float32)
+                    old_tensor = seq2.reshape(1, mt, total_nodes, joint_feats).astype(np.float32)
             except Exception:
                 pass
         
-        interpreter.set_tensor(input_details[0]['index'], tensor)
-        interpreter.invoke()
-        probs = interpreter.get_tensor(output_details[0]['index'])[0]
+        # Prepare tensor for new model
+        new_model_input_shape = new_input_details[0]["shape"]
+        new_tensor = hand_tensor.copy()
+        if tuple(new_model_input_shape) != new_tensor.shape:
+            try:
+                new_tensor = new_tensor.astype(np.float32)
+                mt = int(new_model_input_shape[1])
+                if mt != expected_time:
+                    seq2 = pad_or_truncate_time(hand_flat, mt)
+                    new_tensor = seq2.reshape(1, mt, total_nodes, joint_feats).astype(np.float32)
+            except Exception:
+                pass
         
-        # Get top 3 predictions
-        top3_idx = np.argsort(-probs)[:3]
+        # Run old model
+        old_interpreter.set_tensor(old_input_details[0]['index'], old_tensor)
+        old_interpreter.invoke()
+        old_probs = old_interpreter.get_tensor(old_output_details[0]['index'])[0]
+        
+        # Run new model
+        new_interpreter.set_tensor(new_input_details[0]['index'], new_tensor)
+        new_interpreter.invoke()
+        new_probs = new_interpreter.get_tensor(new_output_details[0]['index'])[0]
+        
+        # Combine predictions: 65% new model, 35% old model
+        # Handle different number of classes if needed
+        max_classes = max(len(old_probs), len(new_probs))
+        old_probs_padded = np.zeros(max_classes, dtype=np.float32)
+        new_probs_padded = np.zeros(max_classes, dtype=np.float32)
+        old_probs_padded[:len(old_probs)] = old_probs
+        new_probs_padded[:len(new_probs)] = new_probs
+        
+        # Weighted average
+        combined_probs = (NEW_MODEL_WEIGHT * new_probs_padded) + (OLD_MODEL_WEIGHT * old_probs_padded)
+        
+        # Normalize to ensure probabilities sum to 1
+        combined_probs = combined_probs / combined_probs.sum()
+        
+        # Get top 3 predictions from combined
+        top3_idx = np.argsort(-combined_probs)[:3]
         top3_predictions = [
-            {"label": label_map.get(int(i), str(int(i))), "prob": float(probs[i])} for i in top3_idx
+            {
+                "label": label_map.get(int(i), str(int(i))), 
+                "prob": float(combined_probs[i]),
+                "old_prob": float(old_probs_padded[i]),
+                "new_prob": float(new_probs_padded[i])
+            } for i in top3_idx
         ]
         
-        # Get final prediction
-        final_idx = int(np.argmax(probs))
-        final_conf = float(probs[final_idx])
+        # Get final prediction from combined
+        final_idx = int(np.argmax(combined_probs))
+        final_conf = float(combined_probs[final_idx])
 
         return jsonify({
             "prediction": label_map.get(final_idx, "Unknown"),
@@ -192,7 +254,8 @@ def predict():
                 "joint_feats": int(joint_feats) if 'joint_feats' in locals() else None,
                 "hand_flat_shape": list(hand_flat.shape) if 'hand_flat' in locals() else None,
                 "hand_tensor_shape": list(hand_tensor.shape) if 'hand_tensor' in locals() else None,
-                "model_input_shape": list(input_details[0]["shape"]) if input_details else None,
+                "old_model_input_shape": list(old_input_details[0]["shape"]) if old_input_details else None,
+                "new_model_input_shape": list(new_input_details[0]["shape"]) if new_input_details else None,
             })
         except Exception:
             pass
@@ -201,17 +264,27 @@ def predict():
 
 @app.route("/", methods=["GET"])
 def home():
-    return "🧠 TFLite Model Server Running"
+    return "🧠 Dual TFLite Model Server Running (65% New + 35% Old)"
 
 @app.route("/health", methods=["GET"])
 def health():
     try:
-        ensure_interpreter()
+        ensure_interpreters()
         info = {
             "status": "ok",
-            "model_loaded": interpreter is not None,
-            "model_path": MODEL_PATH,
-            "model_input_shape": input_details[0]["shape"].tolist() if input_details else None,
+            "ensemble_mode": "weighted_average",
+            "old_model": {
+                "loaded": old_interpreter is not None,
+                "path": OLD_MODEL_PATH,
+                "weight": OLD_MODEL_WEIGHT,
+                "input_shape": old_input_details[0]["shape"].tolist() if old_input_details else None,
+            },
+            "new_model": {
+                "loaded": new_interpreter is not None,
+                "path": NEW_MODEL_PATH,
+                "weight": NEW_MODEL_WEIGHT,
+                "input_shape": new_input_details[0]["shape"].tolist() if new_input_details else None,
+            },
         }
         return jsonify(info)
     except Exception as e:
@@ -220,3 +293,4 @@ def health():
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port, debug=False)
+
